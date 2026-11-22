@@ -19,7 +19,7 @@ app.mount("/metrics", make_asgi_app())
 @app.get("/")
 def root():
     REQUESTS.labels(endpoint="root").inc()
-    return {"service": "hello-api", "version": APP_VERSION, "message": "Hello from AKS"}
+    return {"service": "hello-api", "version": APP_VERSION, "message": "Hello from AKS v2"}
 
 
 @app.get("/healthz")
