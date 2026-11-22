@@ -1,0 +1,20 @@
+{{- if .Values.monitoring.enabled }}
+# Alert 2 of 2 (alert 1 is the Azure Monitor node CPU alert created by Terraform).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hello-api
+  labels:
+    {{- include "hello-api.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: hello-api.rules
+      rules:
+        - alert: HelloApiNoAvailableReplicas
+          expr: kube_deployment_status_replicas_available{namespace="{{ .Release.Namespace }}", deployment="hello-api"} < 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: hello-api has no available replicas
+{{- end }}

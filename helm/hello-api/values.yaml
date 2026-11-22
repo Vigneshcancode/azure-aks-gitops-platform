@@ -1,0 +1,36 @@
+replicaCount: 2
+
+image:
+  repository: hello-api
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+# Entra Workload Identity: the pod's service account is federated with a
+# user-assigned managed identity created by Terraform.
+workloadIdentity:
+  enabled: true
+  clientId: ""
+
+# Key Vault secrets mounted into the pod through the Secrets Store CSI driver.
+keyVault:
+  enabled: true
+  name: ""
+  tenantId: ""
+  secretName: demo-secret
+  mountPath: /mnt/secrets
+
+# ServiceMonitor and PrometheusRule need the kube-prometheus-stack CRDs.
+monitoring:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
