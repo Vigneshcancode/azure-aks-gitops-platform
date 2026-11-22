@@ -1,0 +1,98 @@
+name: app-ci
+
+# PR:   test, build, Trivy scan (nothing is pushed, no Azure login).
+# main: the same, then push to ACR and commit the new image tag to the GitOps values file.
+#       ArgoCD detects that commit and deploys it.
+on:
+  pull_request:
+    paths:
+      - "apps/**"
+      - ".github/workflows/app-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write   # commit the image tag back to main
+
+concurrency:
+  group: app-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  APP_DIR: apps/hello-api
+  PROJECT: aksgitops
+  ENVIRONMENT: dev
+  IMAGE_NAME: hello-api
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - name: Build image
+        run: |
+          echo "TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          docker build -t "${IMAGE_NAME}:${GITHUB_SHA::7}" "${APP_DIR}"
+
+      # Fails the pipeline on fixable CRITICAL vulnerabilities in the image.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Azure login (OIDC)
+        if: env.PUBLISH == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Push to ACR
+        if: env.PUBLISH == 'true'
+        run: |
+          ACR_NAME="$(az acr list -g "rg-${PROJECT}-${ENVIRONMENT}" --query '[0].name' -o tsv)"
+          ACR_SERVER="$(az acr show -n "$ACR_NAME" --query loginServer -o tsv)"
+          az acr login --name "$ACR_NAME"
+          docker tag "${IMAGE_NAME}:${TAG}" "${ACR_SERVER}/${IMAGE_NAME}:${TAG}"
+          docker push "${ACR_SERVER}/${IMAGE_NAME}:${TAG}"
+
+      - name: Commit new tag to GitOps values
+        if: env.PUBLISH == 'true'
+        run: |
+          VALUES="helm/hello-api/values-${ENVIRONMENT}.yaml"
+          sed -i -E "s|^  tag: .*|  tag: \"${TAG}\"|" "$VALUES"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$VALUES"
+          if git diff --cached --quiet; then
+            echo "Tag unchanged, nothing to commit."
+          else
+            git commit -m "chore(gitops): deploy ${IMAGE_NAME} ${TAG} to ${ENVIRONMENT}"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi

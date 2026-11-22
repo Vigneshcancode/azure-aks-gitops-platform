@@ -1,0 +1,64 @@
+name: terraform-apply
+
+# Pushes to main apply dev automatically.
+# Prod is manual (workflow_dispatch) and gated by the "prod" GitHub Environment approval.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to apply
+        type: choice
+        options: [dev, prod]
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-apply-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
+    env:
+      TF_ENV: ${{ inputs.environment || 'dev' }}
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Init
+        working-directory: terraform/envs/${{ env.TF_ENV }}
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ env.TF_ENV }}.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Apply
+        working-directory: terraform/envs/${{ env.TF_ENV }}
+        run: terraform apply -input=false -auto-approve -lock-timeout=5m
+
+      - name: Outputs
+        working-directory: terraform/envs/${{ env.TF_ENV }}
+        run: terraform output
