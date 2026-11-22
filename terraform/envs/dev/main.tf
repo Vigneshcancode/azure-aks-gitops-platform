@@ -33,7 +33,7 @@ module "platform" {
   vnet_cidr       = "10.10.0.0/16"
   aks_subnet_cidr = "10.10.0.0/22"
   aks_sku_tier    = "Free"
-  node_vm_size    = "Standard_B2s"
+  node_vm_size    = "Standard_B2s_v2"
   node_count      = 2
   user_node_count = 0
   alert_email     = var.alert_email
